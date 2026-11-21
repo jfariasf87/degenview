@@ -13,8 +13,9 @@ use std::collections::HashSet;
 use crate::pine::syntax::ast::{Argument, Expression, Statement};
 use crate::pine::{Lexer, Limits, Parser};
 
-/// Call sites of debugger expressions are numbered from here, far above any script's.
-const CALL_SITE_BASE: usize = 1 << 40;
+/// Call sites of debugger expressions are numbered from here, far above any script's: 2^40 on 64-bit
+/// targets, 2^20 on 32-bit ones (wasm32), still far above the 50,000-token limit of a script.
+const CALL_SITE_BASE: usize = 1 << (usize::BITS * 5 / 8);
 const MAX_LENGTH: usize = 2_000;
 
 /// An expression the debugger will run: parsed, and checked read-only.
