@@ -28,8 +28,9 @@ use crate::pine::syntax::token::{Diagnostic, DiagnosticCategory, SourceRange};
 const CACHED_BARS: usize = 500;
 
 /// A volume row's handle is its bar's index shifted up by this many bits, plus the row's number
-/// ([`footprint::MAX_ROWS`] fits).
-pub const ROW_BITS: u32 = 20;
+/// ([`footprint::MAX_ROWS`] fits). Ten bits leave a 32-bit `usize` (wasm32) room for 2^22 bars;
+/// twenty left it 4,096.
+pub const ROW_BITS: u32 = 10;
 
 /// Intrabar sizes the footprint is built from, finest first, in seconds. The provider answers with
 /// the coarsest candle size it holds that divides the one asked for.
@@ -118,8 +119,15 @@ fn error(code: &str, message: impl Into<String>, range: SourceRange) -> Diagnost
     Diagnostic::error(code, DiagnosticCategory::Runtime, message, range)
 }
 
+/// The handle of row `row` of bar `bar_index`, or `na` for a bar past what a handle can name
+/// (2^22 bars on a 32-bit target), which would otherwise wrap onto another bar's handle.
 fn row_handle(bar_index: i64, row: usize) -> RuntimeValue {
-    RuntimeValue::Ref(RefKind::VolumeRow, ((bar_index as usize) << ROW_BITS) | row)
+    match usize::try_from(bar_index) {
+        Ok(bar) if bar < 1 << (usize::BITS - ROW_BITS) => {
+            RuntimeValue::Ref(RefKind::VolumeRow, (bar << ROW_BITS) | row)
+        }
+        _ => RuntimeValue::Na,
+    }
 }
 
 impl Session {
@@ -405,6 +413,19 @@ mod tests {
         assert_eq!(handle >> ROW_BITS, 7);
         assert_eq!(handle & ((1 << ROW_BITS) - 1), 42);
         const { assert!(footprint::MAX_ROWS < 1 << ROW_BITS) };
+    }
+
+    #[test]
+    fn a_row_handle_names_bars_far_past_4096_and_refuses_one_it_cannot() {
+        // 4,096 bars was the limit of a 32-bit handle when rows took twenty bits.
+        let RuntimeValue::Ref(RefKind::VolumeRow, handle) = row_handle(1_000_000, 999) else {
+            panic!("not a row handle");
+        };
+        assert_eq!(handle >> ROW_BITS, 1_000_000);
+        assert_eq!(handle & ((1 << ROW_BITS) - 1), 999);
+        let past = 1_i64 << (usize::BITS - ROW_BITS);
+        assert_eq!(row_handle(past, 0), RuntimeValue::Na);
+        assert_eq!(row_handle(-1, 0), RuntimeValue::Na);
     }
 
     #[test]
